@@ -166,3 +166,6 @@ PRs welcome. Priority areas:
 - [ ] Per-application profile override
 - [ ] Dark/light theme for config window
 - [ ] Export/import profile JSON
+
+### Note
+This is a personal project developed by an IT student practicing C programming to temporarily mitigate a double-clicking hardware issue on my own mouse. As this is an educational experiment, minor bugs may occur. Feedback and contributions are welcome.
