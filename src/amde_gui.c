@@ -1,19 +1,7 @@
-/*
- * amde_gui.c — AMDE v3.0 GUI
- *
- * Implements:
- *   - Tray icon with live tooltip
- *   - Config dialog: per-button override slider, enable/disable per button,
- *     threshold floor control, reset button
- *   - Real-time GDI bounce chart (last 256 events, animated)
- *   - About dialog
- */
-
 #include "../include/amde_core.h"
 #include "../include/amde_engine.h"
 #include "../include/amde_gui.h"
 
-/* ── Chart ring buffer ─────────────────────────────────── */
 CHART_BUFFER g_chart;
 
 typedef struct {
@@ -104,22 +92,6 @@ void Tray_ShowContextMenu(HWND hwnd) {
     DestroyMenu(hMenu);
 }
 
-/* ══════════════════════════════════════════════════════════
-   CONFIG DIALOG
-   Layout:
-     ┌─ Summary ────────────────────────────────────────────┐
-     │  Devices: N   Session bounces: N   P(bounce): N%     │
-     ├─ Settings ───────────────────────────────────────────┤
-     │  Min threshold floor:  [slider 20–80 ms]  [value]   │
-     │  Hysteresis band:      [slider 1–10 ms]   [value]   │
-     ├─ Bounce chart (live) ────────────────────────────────┤
-     │  [GDI chart — 256 events, green=clean, red=bounce]   │
-     │  [threshold line in yellow]                          │
-     ├──────────────────────────────────────────────────────┤
-     │       [Reset profiles]           [Close]             │
-     └──────────────────────────────────────────────────────┘
-   ══════════════════════════════════════════════════════════ */
-
 #define IDC_SLIDER_FLOOR    2001
 #define IDC_SLIDER_HYSTER   2002
 #define IDC_LABEL_FLOOR     2003
@@ -130,18 +102,13 @@ void Tray_ShowContextMenu(HWND hwnd) {
 #define IDC_BTN_CLOSE       2008
 #define IDT_CFG_REFRESH     2009
 
-/* Shared config — written by dialog, read by engine on next event.
-   Using volatile uint32_t; writes are 32-bit atomic on x86/x64. */
+
 volatile uint32_t g_cfgFloorUs      = DEFAULT_MIN_THRESHOLD_US;
 volatile uint32_t g_cfgHysteresisUs = HYSTERESIS_BAND_US;
 
 static HINSTANCE g_hInst = NULL;
-HWND             g_hCfgDlg = NULL;   /* NULL when dialog is closed */
+HWND             g_hCfgDlg = NULL;
 
-/* ── Chart painting ──────────────────────────────────────
-   Draws inside the IDC_CHART static control's client rect.
-   Uses double-buffered GDI to avoid flicker.
-*/
 static void PaintChart(HWND hChart) {
     RECT rc;
     GetClientRect(hChart, &rc);
@@ -153,12 +120,10 @@ static void PaintChart(HWND hChart) {
     HBITMAP hBmp = CreateCompatibleBitmap(hdcScr, W, H);
     SelectObject(hdc, hBmp);
 
-    /* Background */
     HBRUSH bgBrush = CreateSolidBrush(RGB(18, 18, 24));
     FillRect(hdc, &rc, bgBrush);
     DeleteObject(bgBrush);
 
-    /* Axis labels */
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, RGB(120, 120, 140));
     HFONT hFont = CreateFontW(11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -178,7 +143,6 @@ static void PaintChart(HWND hChart) {
         return;
     }
 
-    /* Find max delta for Y-scale (min 60 ms for readability) */
     uint32_t maxDelta = 60000;
     for (int i = 0; i < count; i++) {
         int idx = (g_chart.head - count + i + CHART_HISTORY) % CHART_HISTORY;
@@ -186,7 +150,6 @@ static void PaintChart(HWND hChart) {
             maxDelta = g_chartEntries[idx].deltaUs;
     }
 
-    /* Draw horizontal grid lines at 10 ms, 20 ms, 30 ms, 40 ms, 50 ms */
     HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(40, 40, 55));
     SelectObject(hdc, gridPen);
     for (int ms = 10; ms <= (int)(maxDelta / 1000); ms += 10) {
@@ -200,7 +163,6 @@ static void PaintChart(HWND hChart) {
     }
     DeleteObject(gridPen);
 
-    /* Draw bars */
     int barW  = (count > 0) ? max(1, W / count) : 1;
     int slots = W / max(1, barW);
     int start = (count > slots) ? count - slots : 0;
@@ -216,14 +178,12 @@ static void PaintChart(HWND hChart) {
         int x  = (i - start) * barW;
         int y  = H - barH - 4;
 
-        /* Bar colour: red=bounce, green=clean */
         COLORREF col = e->wasBounce ? RGB(220, 60, 60) : RGB(60, 185, 100);
         HBRUSH barBrush = CreateSolidBrush(col);
         RECT barRc = { x, y, x + barW - 1, H - 4 };
         FillRect(hdc, &barRc, barBrush);
         DeleteObject(barBrush);
 
-        /* Threshold tick line (yellow) — drawn over bar */
         if (e->thresholdUs > 0) {
             double thrRatio = (double)e->thresholdUs / maxDelta;
             int thrY = H - (int)(thrRatio * (H - 16)) - 4;
@@ -238,7 +198,6 @@ static void PaintChart(HWND hChart) {
     }
     ReleaseSRWLockShared(&g_chart.Lock);
 
-    /* Legend */
     SetTextColor(hdc, RGB(220, 60, 60));
     TextOutW(hdc, W - 100, 2, L"■ Bounce", 8);
     SetTextColor(hdc, RGB(60, 185, 100));
@@ -253,7 +212,6 @@ static void PaintChart(HWND hChart) {
     ReleaseDC(hChart, hdcScr);
 }
 
-/* ── Dialog summary update ─────────────────────────────── */
 static void UpdateSummary(HWND hDlg) {
     uint32_t totalBounce = 0, totalClean = 0;
     int      devCount = 0;
@@ -286,7 +244,6 @@ static void UpdateSummary(HWND hDlg) {
     SetDlgItemTextW(hDlg, IDC_STATIC_SUMMARY, buf);
 }
 
-/* ── Slider label update ───────────────────────────────── */
 static void UpdateSliderLabels(HWND hDlg) {
     int floorMs   = (int)(g_cfgFloorUs / 1000);
     int hysterMs  = (int)(g_cfgHysteresisUs / 1000);
@@ -297,30 +254,17 @@ static void UpdateSliderLabels(HWND hDlg) {
     SetDlgItemTextW(hDlg, IDC_LABEL_HYSTER, buf);
 }
 
-/* ── Window procedure ──────────────────────────────────────
- * Bug 3 fix: this window was created with CreateWindowExW and its class
- * registered with lpfnWndProc, so the callback MUST be WNDPROC
- * (returns LRESULT).  The original code declared it as INT_PTR CALLBACK
- * (DLGPROC) and called DefWindowProcW for WM_PAINT — which is correct
- * for a WNDPROC but the mismatched return type caused silent UB on
- * 64-bit Windows where INT_PTR and LRESULT differ in sign convention
- * and the calling convention for unhandled messages differs entirely.
- * Renamed to ConfigWndProc to make the role explicit.
- */
 static LRESULT CALLBACK ConfigWndProc(HWND hDlg, UINT uMsg, WPARAM wp, LPARAM lp) {
     switch (uMsg) {
     case WM_INITDIALOG: {
-        /* Initialise common controls (for TrackBar) */
         INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES };
         InitCommonControlsEx(&icc);
 
-        /* Floor slider: 20–80 ms */
         HWND hFloor = GetDlgItem(hDlg, IDC_SLIDER_FLOOR);
         SendMessageW(hFloor, TBM_SETRANGE, TRUE, MAKELONG(20, 80));
         SendMessageW(hFloor, TBM_SETTICFREQ, 10, 0);
         SendMessageW(hFloor, TBM_SETPOS, TRUE, (LPARAM)(g_cfgFloorUs / 1000));
 
-        /* Hysteresis slider: 1–10 ms */
         HWND hHyster = GetDlgItem(hDlg, IDC_SLIDER_HYSTER);
         SendMessageW(hHyster, TBM_SETRANGE, TRUE, MAKELONG(1, 10));
         SendMessageW(hHyster, TBM_SETPOS, TRUE, (LPARAM)(g_cfgHysteresisUs / 1000));
@@ -328,7 +272,6 @@ static LRESULT CALLBACK ConfigWndProc(HWND hDlg, UINT uMsg, WPARAM wp, LPARAM lp
         UpdateSliderLabels(hDlg);
         UpdateSummary(hDlg);
 
-        /* Refresh timer — repaints chart + updates summary every 500 ms */
         SetTimer(hDlg, IDT_CFG_REFRESH, 500, NULL);
         return 0;
     }
@@ -377,11 +320,7 @@ static LRESULT CALLBACK ConfigWndProc(HWND hDlg, UINT uMsg, WPARAM wp, LPARAM lp
         }
         break;
 
-    /* Bug 4 fix: the chart is painted exclusively by ChartSubclassProc
-     * via WM_PAINT on the child HWND.  Remove the redundant PaintChart()
-     * call here that was causing every repaint cycle to draw the chart
-     * twice (once here via the parent WM_PAINT, once via the subclass).
-     * Just forward to DefWindowProcW so the dialog chrome paints normally. */
+   
     case WM_PAINT:
         return DefWindowProcW(hDlg, uMsg, wp, lp);
 
@@ -399,10 +338,7 @@ static LRESULT CALLBACK ConfigWndProc(HWND hDlg, UINT uMsg, WPARAM wp, LPARAM lp
     return DefWindowProcW(hDlg, uMsg, wp, lp);
 }
 
-/*
- * Chart subclass — intercepts WM_PAINT on the static child so we can
- * draw directly into it without needing a resource-compiled dialog template.
- */
+
 static LRESULT CALLBACK ChartSubclassProc(HWND hwnd, UINT uMsg,
                                            WPARAM wp, LPARAM lp,
                                            UINT_PTR, DWORD_PTR) {
@@ -413,17 +349,15 @@ static LRESULT CALLBACK ChartSubclassProc(HWND hwnd, UINT uMsg,
         EndPaint(hwnd, &ps);
         return 0;
     }
-    if (uMsg == WM_ERASEBKGND) return 1; /* suppress flicker */
+    if (uMsg == WM_ERASEBKGND) return 1;
     return DefWindowProcW(hwnd, uMsg, wp, lp);
 }
 
-/* Bug 2 fix: proper WNDENUMPROC for font propagation. */
 static BOOL CALLBACK SetFontOnChild(HWND hChild, LPARAM lFont) {
     SendMessageW(hChild, WM_SETFONT, (WPARAM)lFont, TRUE);
-    return TRUE; /* continue enumeration */
+    return TRUE;
 }
 
-/* ── Build dialog at runtime (no .rc file needed) ──────── */
 void GUI_ShowConfigDialog(HINSTANCE hInst) {
     if (g_hCfgDlg) {
         SetForegroundWindow(g_hCfgDlg);
@@ -431,36 +365,15 @@ void GUI_ShowConfigDialog(HINSTANCE hInst) {
     }
     g_hInst = hInst;
 
-    /*
-     * Build dialog template in memory.
-     * We create a modeless dialog with a fixed layout.
-     * Units are dialog units (DLU). Dialog base: 4×2 DLU/pixel typical.
-     *
-     * Items:
-     *   Summary text     (STATIC)
-     *   Floor label      (STATIC)
-     *   Floor slider     (TRACKBAR)
-     *   Floor value      (STATIC)
-     *   Hyster label     (STATIC)
-     *   Hyster slider    (TRACKBAR)
-     *   Hyster value     (STATIC)
-     *   Chart frame      (STATIC)
-     *   Reset button     (BUTTON)
-     *   Close button     (BUTTON)
-     */
-
-    /* Easier: use CreateWindowExW directly for a real window (not dialog) */
     WNDCLASSEXW wc = {0};
     wc.cbSize        = sizeof(wc);
-    wc.lpfnWndProc   = ConfigWndProc;  /* Bug 3 fix: proper WNDPROC, not a DLGPROC */
+    wc.lpfnWndProc   = ConfigWndProc;  
     wc.hInstance     = hInst;
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = L"AMDE_ConfigWnd";
-    RegisterClassExW(&wc); /* ignore error on re-register */
+    RegisterClassExW(&wc); 
 
-    /* We'll use CreateDialog with an in-memory template. */
-    /* For simplicity, build as a regular overlapped window with manual controls. */
 
     HWND hWnd = CreateWindowExW(
         WS_EX_APPWINDOW | WS_EX_DLGMODALFRAME,
@@ -472,14 +385,11 @@ void GUI_ShowConfigDialog(HINSTANCE hInst) {
     if (!hWnd) return;
     g_hCfgDlg = hWnd;
 
-    /* ── Create child controls ── */
-
-    /* Summary */
+   
     CreateWindowExW(0, L"STATIC", L"",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         10, 10, 590, 18, hWnd, (HMENU)IDC_STATIC_SUMMARY, hInst, NULL);
 
-    /* Floor label + slider + value */
     CreateWindowExW(0, L"STATIC", L"Min threshold floor:",
         WS_CHILD | WS_VISIBLE,
         10, 40, 140, 18, hWnd, NULL, hInst, NULL);
@@ -518,15 +428,12 @@ void GUI_ShowConfigDialog(HINSTANCE hInst) {
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         10, 115, 590, 16, hWnd, NULL, hInst, NULL);
 
-    /* Chart area */
     HWND hChart = CreateWindowExW(WS_EX_STATICEDGE, L"STATIC", L"",
         WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
         10, 132, 590, 240, hWnd, (HMENU)IDC_CHART, hInst, NULL);
 
-    /* Subclass the chart static to intercept WM_PAINT */
     SetWindowSubclass(hChart, ChartSubclassProc, 0, 0);
 
-    /* Buttons */
     CreateWindowExW(0, L"BUTTON", L"Reset all profiles",
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
         10, 386, 150, 28, hWnd, (HMENU)IDC_BTN_RESET, hInst, NULL);
@@ -535,23 +442,17 @@ void GUI_ShowConfigDialog(HINSTANCE hInst) {
         WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_DEFPUSHBUTTON,
         470, 386, 130, 28, hWnd, (HMENU)IDC_BTN_CLOSE, hInst, NULL);
 
-    /* Apply font to all children.
-     * Bug 2 fix: EnumChildWindows requires a WNDENUMPROC (BOOL CALLBACK(HWND,LPARAM)).
-     * Passing SendMessageW directly is the wrong signature and will crash or
-     * corrupt the stack.  Use a proper inline callback instead. */
+   
     HFONT hFont = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                                CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                                DEFAULT_PITCH, L"Segoe UI");
 
-    /* Nested callback — valid in C99/C11 via a file-scope helper. */
     EnumChildWindows(hWnd, SetFontOnChild, (LPARAM)hFont);
     SendMessageW(hWnd, WM_SETFONT, (WPARAM)hFont, TRUE);
 
-    /* Start refresh timer */
     SetTimer(hWnd, IDT_CFG_REFRESH, 500, NULL);
 
-    /* Initial data */
     UpdateSummary(hWnd);
     UpdateSliderLabels(hWnd);
 
@@ -559,9 +460,6 @@ void GUI_ShowConfigDialog(HINSTANCE hInst) {
     UpdateWindow(hWnd);
 }
 
-/* ══════════════════════════════════════════════════════════
-   Main message window WndProc
-   ══════════════════════════════════════════════════════════ */
 LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT uMsg, WPARAM wp, LPARAM lp) {
     switch (uMsg) {
     case WM_CREATE:
@@ -573,7 +471,6 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT uMsg, WPARAM wp, LPARAM lp) {
         break;
 
     case WM_AMDE_REFRESH_CHART:
-        /* Forward to config dialog if open */
         if (g_hCfgDlg) PostMessageW(g_hCfgDlg, WM_AMDE_REFRESH_CHART, 0, 0);
         break;
 
@@ -631,7 +528,6 @@ LRESULT CALLBACK MsgWndProc(HWND hwnd, UINT uMsg, WPARAM wp, LPARAM lp) {
         break;
     }
 
-    /* Store hInstance for GUI_ShowConfigDialog */
     static HINSTANCE s_hInst = NULL;
     if (uMsg == WM_CREATE) {
         CREATESTRUCTW* cs = (CREATESTRUCTW*)lp;
