@@ -1,6 +1,11 @@
 # AMDE v1.0 — Adaptive Mechanical Debounce Engine
 
-> **Stop double-click ghosts for good.** AMDE runs silently in your system tray, learns your mouse's bounce pattern per-device, and filters phantom clicks with a statistically grounded algorithm — not a dumb fixed delay.
+Predictive, device-adaptive signal debouncing powered by Bayesian inference. Operating continuously with zero allocation, AMDE constructs a dynamic Beta-conjugate posterior per device path to eliminate mechanical switch anomalies, completely superseding legacy static-delay filtering.
+
+---
+
+## Installing
+Executables are available on the [release page](https://github.com/giaenmini/FixDoubleClick/releases/tag/v1.0.0).
 
 ---
 
@@ -161,9 +166,3 @@ PRs welcome. Priority areas:
 - [ ] Per-application profile override
 - [ ] Dark/light theme for config window
 - [ ] Export/import profile JSON
-
----
-
-## License
-
-MIT
