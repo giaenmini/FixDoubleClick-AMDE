@@ -7,7 +7,7 @@
 #define STRICT
 #endif
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0602   /* Windows 8+ (SRWLock, GetTickCount64) */
+#define _WIN32_WINNT 0x0602  
 #endif
 #ifndef UNICODE
 #define UNICODE
@@ -28,14 +28,14 @@
 #define AMDE_VERSION_MAJOR      3
 #define AMDE_VERSION_MINOR      0
 
-#define BOUNCE_HISTORY_SIZE         128     /* 2× v2 — đủ cho P95 tin cậy hơn */
-#define QUANTILE_UPDATE_PERIOD      4       /* cập nhật nhanh hơn v2 (8→4)    */
-#define MAX_DEVICE_PROFILES         32      /* tăng từ 16 để hỗ trợ KVM lớn   */
+#define BOUNCE_HISTORY_SIZE         128     
+#define QUANTILE_UPDATE_PERIOD      4       
+#define MAX_DEVICE_PROFILES         32      
 #define MAX_DEVICE_ID_LEN           128
-#define DEFAULT_MIN_THRESHOLD_US    35000   /* 35 ms — hard floor              */
-#define MAX_BAYES_EXTENSION_US      20000   /* tăng từ 15 ms → 20 ms           */
-#define HYSTERESIS_BAND_US          2500    /* dải hysteresis 2.5 ms           */
-#define DRAG_THRESHOLD_SQ           25      /* 5 px                            */
+#define DEFAULT_MIN_THRESHOLD_US    35000   
+#define MAX_BAYES_EXTENSION_US      20000   
+#define HYSTERESIS_BAND_US          2500    
+#define DRAG_THRESHOLD_SQ           25      
 #define TOOLTIP_REFRESH_MS          1500
 
 
@@ -58,7 +58,7 @@ typedef enum {
 } BUTTON_STATE;
 
 
-#define PERSIST_MAGIC    0x414D4433u   /* "AMD3" — v3 format */
+#define PERSIST_MAGIC    0x414D4433u   
 #define PERSIST_VERSION  1u
 
 typedef struct {
@@ -113,8 +113,7 @@ extern HHOOK            g_hHook;
 extern NOTIFYICONDATAW  g_nid;
 
 #define WM_AMDE_TRAYICON        (WM_USER + 1)
-#define WM_AMDE_REFRESH_CHART   (WM_USER + 2)   /* posted by hook → chart wnd */
-
+#define WM_AMDE_REFRESH_CHART   (WM_USER + 2)   
 #define IDM_TRAY_EXIT           40001
 #define IDM_TRAY_RESETALL       40002
 #define IDM_TRAY_ABOUT          40003
