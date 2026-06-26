@@ -1,4 +1,4 @@
-# AMDE v3.0 — Adaptive Mechanical Debounce Engine
+# AMDE v1.0 — Adaptive Mechanical Debounce Engine
 
 > **Stop double-click ghosts for good.** AMDE runs silently in your system tray, learns your mouse's bounce pattern per-device, and filters phantom clicks with a statistically grounded algorithm — not a dumb fixed delay.
 
