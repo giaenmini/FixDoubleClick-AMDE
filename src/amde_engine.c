@@ -1,26 +1,10 @@
-/*
- * amde_engine.c — AMDE v3.0 Debounce Engine
- *
- * Implements:
- *   - QuickSelect P95 (iterative, median-of-three pivot)
- *   - Beta(α,β) conjugate Bayesian prior (real posterior, not EMA)
- *   - Dual-threshold hysteresis
- *   - LRU device profile registry (SRWLock, double-check)
- *   - Registry persistence with versioned binary blob
- *   - XBUTTON1 + XBUTTON2 support
- *   - Drag detection per-button
- */
-
 #include "../include/amde_core.h"
 #include "../include/amde_engine.h"
 #include "../include/amde_gui.h"
 
-/* Live config knobs written by the GUI sliders.
-   Declared volatile in amde_gui.c — import here for the engine. */
 extern volatile uint32_t g_cfgFloorUs;
 extern volatile uint32_t g_cfgHysteresisUs;
 
-/* ── Global state ─────────────────────────────────────── */
 DEVICE_PROFILE  g_profiles[MAX_DEVICE_PROFILES];
 int             g_profileCount        = 0;
 SRWLOCK         g_RegistryLock        = SRWLOCK_INIT;
@@ -32,10 +16,7 @@ HWND            g_hRawWnd             = NULL;
 HHOOK           g_hHook               = NULL;
 NOTIFYICONDATAW g_nid;
 
-/* ══════════════════════════════════════════════════════
-   QuickSelect — iterative, median-of-three pivot
-   O(n) average, O(n²) worst-case (rare with MoT pivot)
-   ══════════════════════════════════════════════════════ */
+
 #define SWAP32(a,b) do { uint32_t _t=(a);(a)=(b);(b)=_t; } while(0)
 
 static uint32_t QuickSelect(uint32_t* arr, int n, int k) {
@@ -43,7 +24,6 @@ static uint32_t QuickSelect(uint32_t* arr, int n, int k) {
     while (left <= right) {
         if (left == right) return arr[left];
         int mid = left + (right - left) / 2;
-        /* Median-of-three: sort left/mid/right, use mid as pivot */
         if (arr[left]  > arr[mid])   SWAP32(arr[left],  arr[mid]);
         if (arr[left]  > arr[right]) SWAP32(arr[left],  arr[right]);
         if (arr[mid]   > arr[right]) SWAP32(arr[mid],   arr[right]);
@@ -61,31 +41,15 @@ static uint32_t QuickSelect(uint32_t* arr, int n, int k) {
 }
 #undef SWAP32
 
-/* ══════════════════════════════════════════════════════
-   Threshold recalculation
-   Called after every Bayesian update.
-   ══════════════════════════════════════════════════════ */
 static void RecalcThresholds(BUTTON_PERSISTENT* p) {
-    /*
-     * Bayesian extension:
-     *   bounce_prob = alpha / (alpha+beta)  in [0,1]
-     *   extension   = bounce_prob x MAX_BAYES_EXTENSION_US
-     *
-     * This is the correct use of the posterior mean — the higher
-     * the estimated bounce probability, the more we extend the
-     * debounce window.
-     *
-     * Bug 1 fix: use the live GUI config values (g_cfgFloorUs,
-     * g_cfgHysteresisUs) instead of the compile-time constants so
-     * slider changes actually take effect in the engine.
-     */
-    uint32_t floorUs   = g_cfgFloorUs;       /* volatile read — GUI slider */
-    uint32_t hysterUs  = g_cfgHysteresisUs;  /* volatile read — GUI slider */
+    
+    uint32_t floorUs   = g_cfgFloorUs;      
+    uint32_t hysterUs  = g_cfgHysteresisUs;  
 
     double   bounce_prob = Bayes_BounceProb(p->bayes_alpha, p->bayes_beta);
     uint32_t bayes_ext   = (uint32_t)(bounce_prob * MAX_BAYES_EXTENSION_US);
 
-    /* Enforce the user-chosen floor before adding the Bayesian extension. */
+   
     if (p->p95_threshold_us < floorUs)
         p->p95_threshold_us = floorUs;
 
@@ -93,15 +57,7 @@ static void RecalcThresholds(BUTTON_PERSISTENT* p) {
     p->threshold_enter_us = p->threshold_exit_us + hysterUs;
 }
 
-/* ══════════════════════════════════════════════════════
-   Registry Persistence
-   Blob layout:
-     [u32 magic] [u32 version] [u32 count]
-     count × {
-       WCHAR[MAX_DEVICE_ID_LEN]       szId
-       BUTTON_PERSISTENT[BUTTON_COUNT]
-     }
-   ══════════════════════════════════════════════════════ */
+
 #define AMDE_REG_SUBKEY     L"Software\\AMDE"
 #define AMDE_PROFILE_VALUE  L"DeviceProfilesV3"
 
@@ -114,7 +70,7 @@ void Engine_PersistSave(void) {
 
     size_t recSz    = MAX_DEVICE_ID_LEN * sizeof(WCHAR)
                     + BUTTON_COUNT * sizeof(BUTTON_PERSISTENT);
-    size_t totalSz  = sizeof(uint32_t) * 3          /* magic+version+count */
+    size_t totalSz  = sizeof(uint32_t) * 3         
                     + (size_t)validCount * recSz;
 
     BYTE* blob = (BYTE*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, totalSz);
@@ -216,9 +172,7 @@ void Engine_ResetAllProfiles(void) {
     AmdeLog(L"[AMDE] All profiles reset\n");
 }
 
-/* ══════════════════════════════════════════════════════
-   Device ID
-   ══════════════════════════════════════════════════════ */
+
 static void ParseDeviceId(HANDLE hDevice, WCHAR* szOutId) {
     UINT size = 0;
     if (GetRawInputDeviceInfoW(hDevice, RIDI_DEVICENAME, NULL, &size) == 0 && size > 0) {
@@ -231,9 +185,7 @@ static void ParseDeviceId(HANDLE hDevice, WCHAR* szOutId) {
     }
 }
 
-/* ══════════════════════════════════════════════════════
-   LRU Profile Registry
-   ══════════════════════════════════════════════════════ */
+
 static void InitButtonProfile(BUTTON_PROFILE* bp) {
     bp->persist.bayes_alpha        = BAYES_ALPHA_INIT;
     bp->persist.bayes_beta         = BAYES_BETA_INIT;
@@ -254,7 +206,7 @@ static void InitButtonProfile(BUTTON_PROFILE* bp) {
 DEVICE_PROFILE* Engine_GetOrCreateProfile(HANDLE hDevice) {
     uint64_t tick = GetTickCount64();
 
-    /* Phase 1: shared read — fast path (most calls land here) */
+  
     AcquireSRWLockShared(&g_RegistryLock);
     for (int i = 0; i < g_profileCount; i++) {
         if (g_profiles[i].valid && g_profiles[i].hRawDevice == hDevice) {
@@ -266,7 +218,6 @@ DEVICE_PROFILE* Engine_GetOrCreateProfile(HANDLE hDevice) {
     }
     ReleaseSRWLockShared(&g_RegistryLock);
 
-    /* Phase 2: exclusive write — double-check pattern */
     AcquireSRWLockExclusive(&g_RegistryLock);
     for (int i = 0; i < g_profileCount; i++) {
         if (g_profiles[i].valid && g_profiles[i].hRawDevice == hDevice) {
@@ -277,7 +228,6 @@ DEVICE_PROFILE* Engine_GetOrCreateProfile(HANDLE hDevice) {
         }
     }
 
-    /* Re-map persisted profile by device string */
     WCHAR szId[MAX_DEVICE_ID_LEN] = {0};
     ParseDeviceId(hDevice, szId);
     for (int i = 0; i < g_profileCount; i++) {
@@ -292,7 +242,6 @@ DEVICE_PROFILE* Engine_GetOrCreateProfile(HANDLE hDevice) {
         }
     }
 
-    /* Allocate new slot or evict LRU */
     int targetIdx = -1;
     if (g_profileCount < MAX_DEVICE_PROFILES) {
         targetIdx = g_profileCount++;
@@ -324,9 +273,7 @@ DEVICE_PROFILE* Engine_GetOrCreateProfile(HANDLE hDevice) {
     return ptr;
 }
 
-/* ══════════════════════════════════════════════════════
-   Raw Input Window — records last active device handle
-   ══════════════════════════════════════════════════════ */
+
 LRESULT CALLBACK RawInputWndProc(HWND hwnd, UINT uMsg, WPARAM wp, LPARAM lp) {
     if (uMsg == WM_INPUT) {
         UINT dwSize = 0;
@@ -347,9 +294,7 @@ LRESULT CALLBACK RawInputWndProc(HWND hwnd, UINT uMsg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, uMsg, wp, lp);
 }
 
-/* ══════════════════════════════════════════════════════
-   Core Hook Engine
-   ══════════════════════════════════════════════════════ */
+
 LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
     if (nCode < 0) return CallNextHookEx(NULL, nCode, wp, lp);
 
@@ -362,7 +307,6 @@ LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
     HANDLE hActiveDev = (HANDLE)InterlockedCompareExchangePointer(
                             &g_hLastActiveRawDevice, NULL, NULL);
 
-    /* ── Drag detection — updates state, never filters ── */
     if (wp == WM_MOUSEMOVE) {
         if (hActiveDev) {
             DEVICE_PROFILE* dp = Engine_GetOrCreateProfile(hActiveDev);
@@ -381,7 +325,6 @@ LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
         return CallNextHookEx(NULL, nCode, wp, lp);
     }
 
-    /* ── Classify button and direction ── */
     MOUSE_BUTTON btn    = BUTTON_COUNT;
     BOOL         isDown = FALSE;
 
@@ -403,7 +346,6 @@ LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
     if (btn == BUTTON_COUNT || !hActiveDev)
         return CallNextHookEx(NULL, nCode, wp, lp);
 
-    /* High-resolution timestamp */
     LARGE_INTEGER liPerf;
     QueryPerformanceCounter(&liPerf);
     uint64_t nowUs = (liPerf.QuadPart * 1000000ULL) / g_QpcFrequency.QuadPart;
@@ -418,20 +360,14 @@ LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
                            ? (nowUs - bp->llLastUpTimeUs)
                            : UINT64_MAX;
 
-        /*
-         * Hysteresis:
-         *   In filter zone  → use exit threshold (lower)  — need larger gap to exit
-         *   Outside zone    → use enter threshold (higher) — only enter on very short delta
-         */
+        
         uint32_t evalThresh = bp->is_in_filter_zone
                               ? bp->persist.threshold_exit_us
                               : bp->persist.threshold_enter_us;
 
         if (bp->state != STATE_DRAGGING && deltaUs < (uint64_t)evalThresh) {
-            /* ── BOUNCE DETECTED ── */
             bp->is_in_filter_zone = TRUE;
 
-            /* Record sample */
             bp->persist.samples[bp->persist.sample_index] = (uint32_t)deltaUs;
             bp->persist.sample_index = (bp->persist.sample_index + 1) % BOUNCE_HISTORY_SIZE;
             if (bp->persist.count < BOUNCE_HISTORY_SIZE) bp->persist.count++;
@@ -439,10 +375,8 @@ LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
             bp->persist.total_bounces++;
             InterlockedIncrement(&g_totalBounceSession);
 
-            /* Real Bayesian update — Beta conjugate posterior */
             Bayes_Update(&bp->persist, TRUE);
 
-            /* Recalculate P95 every QUANTILE_UPDATE_PERIOD bounces */
             if (++bp->op_counter >= QUANTILE_UPDATE_PERIOD && bp->persist.count > 1) {
                 bp->op_counter = 0;
                 uint32_t temp[BOUNCE_HISTORY_SIZE];
@@ -462,15 +396,13 @@ LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
                     bp->persist.bayes_alpha, bp->persist.bayes_beta,
                     Bayes_BounceProb(bp->persist.bayes_alpha, bp->persist.bayes_beta));
 
-            /* Feed chart — do NOT hold the button lock across Chart_Push */
             uint32_t snapDelta = (uint32_t)deltaUs;
             uint32_t snapThr   = evalThresh;
             ReleaseSRWLockExclusive(&bp->Lock);
             Chart_Push(snapDelta, snapThr, TRUE);
-            return 1; /* swallow event */
+            return 1;
         }
 
-        /* ── CLEAN CLICK ── */
         bp->is_in_filter_zone = FALSE;
         bp->state             = STATE_PRESSED;
         bp->llLastDownTimeUs  = nowUs;
@@ -485,7 +417,7 @@ LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
         ReleaseSRWLockExclusive(&bp->Lock);
         Chart_Push(snapDelta, snapThr, FALSE);
 
-    } else { /* isUp */
+    } else { 
         bp->state          = STATE_IDLE;
         bp->llLastUpTimeUs = nowUs;
         ReleaseSRWLockExclusive(&bp->Lock);
@@ -494,14 +426,11 @@ LRESULT CALLBACK BalancedMouseProc(int nCode, WPARAM wp, LPARAM lp) {
     return CallNextHookEx(NULL, nCode, wp, lp);
 }
 
-/* ══════════════════════════════════════════════════════
-   Engine init / shutdown
-   ══════════════════════════════════════════════════════ */
+
 BOOL Engine_Init(HINSTANCE hInstance) {
     QueryPerformanceFrequency(&g_QpcFrequency);
     Engine_PersistLoad();
 
-    /* Register window classes */
     WNDCLASSEXW wc = {0};
     wc.cbSize        = sizeof(wc);
     wc.hInstance     = hInstance;
@@ -514,7 +443,6 @@ BOOL Engine_Init(HINSTANCE hInstance) {
     wc.lpszClassName = L"AMDE_MsgWnd";
     if (!RegisterClassExW(&wc)) return FALSE;
 
-    /* Hidden window for Raw Input */
     g_hRawWnd = CreateWindowExW(0, L"AMDE_RawInput", L"", 0,
                                 0, 0, 0, 0, HWND_MESSAGE, NULL, hInstance, NULL);
     if (!g_hRawWnd) return FALSE;
@@ -526,14 +454,12 @@ BOOL Engine_Init(HINSTANCE hInstance) {
     rid.hwndTarget  = g_hRawWnd;
     RegisterRawInputDevices(&rid, 1, sizeof(rid));
 
-    /* Hidden window for tray + timers */
     g_hMsgWnd = CreateWindowExW(0, L"AMDE_MsgWnd", L"", 0,
                                 0, 0, 0, 0, HWND_MESSAGE, NULL, hInstance, NULL);
     if (!g_hMsgWnd) return FALSE;
 
     Tray_Add(g_hMsgWnd);
 
-    /* Install global hook */
     g_hHook = SetWindowsHookExW(WH_MOUSE_LL, BalancedMouseProc, hInstance, 0);
     if (!g_hHook) {
         AmdeLog(L"[AMDE] SetWindowsHookEx failed: %lu\n", GetLastError());
