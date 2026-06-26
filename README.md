@@ -5,7 +5,7 @@ Predictive, device-adaptive signal debouncing powered by Bayesian inference. Ope
 ---
 
 ## Installing
-Executables are available on the [release page](https://github.com/giaenmini/FixDoubleClick/releases/tag/v1.0.0).
+Executables are available on the [release page](https://github.com/giaenmini/FixDoubleClick-AMDE/releases/tag/v1.0).
 
 ---
 
